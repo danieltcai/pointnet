@@ -179,7 +179,7 @@ def train_one_epoch(sess, ops, train_writer):
     for fn in range(len(TRAIN_FILES)):
         log_string('----' + str(fn) + '-----')
         current_data, current_label = provider.loadDataFile(TRAIN_FILES[train_file_idxs[fn]])
-        current_data = current_data[:,0:NUM_POINT,:]
+        current_data = current_data[:,0:NUM_POINT,:] # Data is (num_point_clouds x points_per_cloud x 3) 
         current_data, current_label, _ = provider.shuffle_data(current_data, np.squeeze(current_label))            
         current_label = np.squeeze(current_label)
         
