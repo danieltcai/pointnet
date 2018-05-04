@@ -76,14 +76,16 @@ def get_model(point_cloud, is_training, bn_decay=None):
     assert concat_features.get_shape() == [batch_size, num_point, 64 + 1024]
     concat_features = tf.reshape(concat_features, [batch_size, -1])
 
-    # net = tf_util.fully_connected(concat_features, 512, bn=True, is_training=is_training,
-    #                               scope='fc1', bn_decay=bn_decay)
+    # Try to overfit to small dataset first
+    # Don't use dropout for regression
+    net = tf_util.fully_connected(concat_features, 512, bn=True, is_training=is_training,
+                                  scope='fc1', bn_decay=bn_decay)
     # net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
     #                       scope='dp1')
-    net = tf_util.fully_connected(concat_features, 256, bn=True, is_training=is_training,
+    net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training,
                                   scope='fc2', bn_decay=bn_decay)
-    net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
-                          scope='dp2')
+    # net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
+    #                       scope='dp2')
     net = tf_util.fully_connected(net, num_output, activation_fn=None, scope='fc3')
 
     # print(net.get_shape())
@@ -107,16 +109,23 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     g_hat = y_hat[:, :, 1:] # (B x N x 6)
     g = y[:, :, 1:]
 
-    # TODO FIND A WAY TO CAST FLOAT TO BOOL
     robust_mask = tf.cast(tf.cast(q, tf.bool), tf.float32) # (B x N)
 
+    #  L2 loss
     square_error = tf.square(g - g_hat) # (B x N x 6)
-    per_point_square_error = tf.reduce_sum(square_error, axis=-1) #(B x N)
+    per_point_loss = tf.reduce_sum(square_error, axis=-1) #(B x N)
+
+    # Huber loss
+    # huber_loss = tf.losses.huber_loss(
+    #     g, g_hat, reduction=None) # (B x N x 6)
+    # per_point_loss = tf.reduce_sum(huber_loss, axis=-1) #(B x N)
+    
 
     # print(per_point_square_error.get_shape())
     # print(robust_mask.get_shape())
 
-    loss_coords = tf.multiply(robust_mask, per_point_square_error) # (B x N)
+    # Don't penalize the regression if there is no grasp present
+    loss_coords = tf.multiply(robust_mask, per_point_loss) # (B x N)
     loss_coords = tf.reduce_sum(loss_coords, axis=1) # (B)
 
     # TODO: Add other loss terms 

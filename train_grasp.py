@@ -201,12 +201,23 @@ def train_one_epoch(sess, ops, train_writer):
             start_idx = batch_idx * BATCH_SIZE
             end_idx = (batch_idx+1) * BATCH_SIZE
             
+            # Don't rotate the data without the labels! This works for classification 
+            # but not for regression lol
             # Augment batched point clouds by rotation and jittering
-            rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
-            jittered_data = provider.jitter_point_cloud(rotated_data)
-            feed_dict = {ops['pointclouds_pl']: jittered_data,
-                         ops['labels_pl']: current_label[start_idx:end_idx],
+            # rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
+            # jittered_data = provider.jitter_point_cloud(rotated_data)
+            batch_data = current_data[start_idx:end_idx]
+            batch_labels = current_label[start_idx:end_idx]
+            feed_dict = {ops['pointclouds_pl']: batch_data,
+                         ops['labels_pl']: batch_labels,
                          ops['is_training_pl']: is_training,}
+
+            # Original data processing
+            # rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
+            # jittered_data = provider.jitter_point_cloud(rotated_data)
+            # feed_dict = {ops['pointclouds_pl']: jittered_data,
+            #              ops['labels_pl']: current_label[start_idx:end_idx],
+            #              ops['is_training_pl']: is_training,}
             summary, step, _, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
                 ops['train_op'], ops['loss'], ops['pred']], feed_dict=feed_dict)
             train_writer.add_summary(summary, step)
