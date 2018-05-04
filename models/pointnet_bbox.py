@@ -11,15 +11,17 @@ from transform_nets import input_transform_net, feature_transform_net
 
 def placeholder_inputs(batch_size, num_point):
     pointclouds_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
-    labels_pl = tf.placeholder(tf.int32, shape=(batch_size))
+    labels_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point, 7))
     return pointclouds_pl, labels_pl
 
 
 def get_model(point_cloud, is_training, bn_decay=None):
-    """ Classification PointNet, input is BxNx3, output Bx40 """
+    """ Classification PointNet, input is BxNx3, output Bx(Nx7) """
     batch_size = point_cloud.get_shape()[0].value
     num_point = point_cloud.get_shape()[1].value
     end_points = {}
+
+    num_output = num_point * 7
 
     with tf.variable_scope('transform_net1') as sc:
         transform = input_transform_net(point_cloud, is_training, bn_decay, K=3)
@@ -61,27 +63,71 @@ def get_model(point_cloud, is_training, bn_decay=None):
 
     net = tf.reshape(net, [batch_size, -1])
 
-    global_features = net # global features, dim (B x 1024)
 
-    net = tf_util.fully_connected(net, 512, bn=True, is_training=is_training,
-                                  scope='fc1', bn_decay=bn_decay)
-    net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
-                          scope='dp1')
-    net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training,
+    global_features = net # global features, dim (B x 1024)
+    global_features = tf.expand_dims(global_features, axis=1) # (B x 1 x 1024)
+    global_features = tf.tile(global_features, [1, num_point, 1]) # (B x N x 1024)
+
+    concat_features = tf.concat(
+        [local_features, global_features],
+        axis=2)
+
+    # print(concat_features.get_shape())
+    assert concat_features.get_shape() == [batch_size, num_point, 64 + 1024]
+    concat_features = tf.reshape(concat_features, [batch_size, -1])
+
+    # net = tf_util.fully_connected(concat_features, 512, bn=True, is_training=is_training,
+    #                               scope='fc1', bn_decay=bn_decay)
+    # net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
+    #                       scope='dp1')
+    net = tf_util.fully_connected(concat_features, 256, bn=True, is_training=is_training,
                                   scope='fc2', bn_decay=bn_decay)
     net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
                           scope='dp2')
-    net = tf_util.fully_connected(net, 40, activation_fn=None, scope='fc3')
+    net = tf_util.fully_connected(net, num_output, activation_fn=None, scope='fc3')
+
+    # print(net.get_shape())
+    assert net.get_shape() == [batch_size, num_point * 7]
 
     return net, end_points
 
 
 def get_loss(pred, label, end_points, reg_weight=0.001):
-    """ pred: B*NUM_CLASSES,
-        label: B, """
-    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=label)
-    classify_loss = tf.reduce_mean(loss)
-    tf.summary.scalar('classify loss', classify_loss)
+    """ pred: Bx(Nx7),
+        label: Bx(Nx7), """
+    batch_size = pred.get_shape()[0].value
+    num_point = pred.get_shape()[1].value / 7
+
+    y_hat = tf.reshape(pred, [batch_size, num_point, 7]) # (B x N x 7)
+    y = tf.reshape(label, [batch_size, num_point, 7])
+
+    q_hat = y_hat[:, :, 0] # (B x N)
+    q = y[:, :, 0]
+
+    g_hat = y_hat[:, :, 1:] # (B x N x 6)
+    g = y[:, :, 1:]
+
+    # TODO FIND A WAY TO CAST FLOAT TO BOOL
+    robust_mask = tf.cast(tf.cast(q, tf.bool), tf.float32) # (B x N)
+
+    square_error = tf.square(g - g_hat) # (B x N x 6)
+    per_point_square_error = tf.reduce_sum(square_error, axis=-1) #(B x N)
+
+    # print(per_point_square_error.get_shape())
+    # print(robust_mask.get_shape())
+
+    loss_coords = tf.multiply(robust_mask, per_point_square_error) # (B x N)
+    loss_coords = tf.reduce_sum(loss_coords, axis=1) # (B)
+
+    # TODO: Add other loss terms 
+
+    regression_loss = tf.reduce_mean(loss_coords)
+    tf.summary.scalar('regression loss', regression_loss)
+
+
+    # loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=label)
+    # classify_loss = tf.reduce_mean(loss)
+    # tf.summary.scalar('classify loss', classify_loss)
 
     # Enforce the transformation as orthogonal matrix
     transform = end_points['transform'] # BxKxK
@@ -91,7 +137,7 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     mat_diff_loss = tf.nn.l2_loss(mat_diff) 
     tf.summary.scalar('mat loss', mat_diff_loss)
 
-    return classify_loss + mat_diff_loss * reg_weight
+    return regression_loss + mat_diff_loss * reg_weight
 
 
 if __name__=='__main__':
