@@ -64,7 +64,7 @@ BN_DECAY_CLIP = 0.99
 
 # ModelNet40 official train/test split
 TRAIN_FILES = provider.getDataFiles( \
-    os.path.join(BASE_DIR, 'data/dexnet/train_files.txt'))
+    os.path.join(BASE_DIR, 'data/kit/train_files.txt'))
 # TEST_FILES = provider.getDataFiles(\
 #     os.path.join(BASE_DIR, 'data/modelnet40_ply_hdf5_2048/test_files.txt'))
 

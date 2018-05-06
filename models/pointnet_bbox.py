@@ -78,25 +78,52 @@ def get_model(point_cloud, is_training, bn_decay=None):
 
     # Try to overfit to small dataset first
     # Don't use dropout for regression
-    net = tf_util.fully_connected(concat_features, 512, bn=True, is_training=is_training,
+    net_concat = tf_util.fully_connected(concat_features, 512, bn=True, is_training=is_training,
                                   scope='fc1', bn_decay=bn_decay)
-    # net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
+    # net_concat = tf_util.dropout(net_concat, keep_prob=0.7, is_training=is_training,
     #                       scope='dp1')
-    net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training,
+    net_concat = tf_util.fully_connected(net_concat, 256, bn=True, is_training=is_training,
                                   scope='fc2', bn_decay=bn_decay)
-    # net = tf_util.dropout(net, keep_prob=0.7, is_training=is_training,
+    # net_concat = tf_util.dropout(net_concat, keep_prob=0.7, is_training=is_training,
     #                       scope='dp2')
-    net = tf_util.fully_connected(net, num_output, activation_fn=None, scope='fc3')
+    net_concat = tf_util.fully_connected(net_concat, num_output, activation_fn=None, scope='fc3')
 
-    # print(net.get_shape())
-    assert net.get_shape() == [batch_size, num_point * 7]
+    # print(net_concat.get_shape())
+    assert net_concat.get_shape() == [batch_size, num_point * 7]
 
-    return net, end_points
+    return net_concat, end_points
 
 
 def get_loss(pred, label, end_points, reg_weight=0.001):
     """ pred: Bx(Nx7),
         label: Bx(Nx7), """
+
+    # Just predict position of grasps
+    batch_size = pred.get_shape()[0].value
+    num_point = pred.get_shape()[1].value / 7
+
+    y_hat = tf.reshape(pred, [batch_size, num_point, 7]) # (B x N x 7)
+    y = tf.reshape(label, [batch_size, num_point, 7])
+
+    q_hat = y_hat[:, :, 0] # (B x N)
+    q = y[:, :, 0]
+
+    g_hat = y_hat[:, :, 1:4] # (B x N x 3)
+    g = y[:, :, 1:4]
+
+    robust_mask = tf.cast(tf.cast(q, tf.bool), tf.float32) # (B x N)
+
+    #  L2 loss
+    square_error = tf.square(g - g_hat) # (B x N x 3)
+    per_point_loss = tf.reduce_sum(square_error, axis=-1) #(B x N)
+
+    # Don't penalize the regression if there is no grasp present
+    per_point_loss_coords = tf.multiply(robust_mask, per_point_loss) # (B x N)
+    loss_coords = tf.reduce_sum(per_point_loss_coords, axis=-1) # (B)
+    # End
+
+    # Orig
+    '''
     batch_size = pred.get_shape()[0].value
     num_point = pred.get_shape()[1].value / 7
 
@@ -125,8 +152,10 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     # print(robust_mask.get_shape())
 
     # Don't penalize the regression if there is no grasp present
-    loss_coords = tf.multiply(robust_mask, per_point_loss) # (B x N)
-    loss_coords = tf.reduce_sum(loss_coords, axis=1) # (B)
+    per_point_loss_coords = tf.multiply(robust_mask, per_point_loss) # (B x N)
+    loss_coords = tf.reduce_sum(per_point_loss_coords, axis=-1) # (B)
+    '''
+    # End Orig
 
     # TODO: Add other loss terms 
 
