@@ -14,12 +14,13 @@ sys.path.append(os.path.join(BASE_DIR, 'utils'))
 import provider
 import tf_util
 
+# Parse args
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', default='pointnet_bbox', help='Model name: pointnet_cls or pointnet_cls_basic [default: pointnet_cls]')
 parser.add_argument('--log_dir', default='log', help='Log dir [default: log]')
 parser.add_argument('--num_point', type=int, default=1024, help='Point Number [256/512/1024/2048] [default: 1024]')
-parser.add_argument('--max_epoch', type=int, default=250, help='Epoch to run [default: 250]')
+parser.add_argument('--max_epoch', type=int, default=50, help='Epoch to run [default: 50]') # orig 250
 parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
@@ -27,7 +28,6 @@ parser.add_argument('--optimizer', default='adam', help='adam or momentum [defau
 parser.add_argument('--decay_step', type=int, default=200000, help='Decay step for lr decay [default: 200000]')
 parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.8]')
 FLAGS = parser.parse_args()
-
 
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
@@ -42,7 +42,7 @@ DECAY_RATE = FLAGS.decay_rate
 # Set gpu
 os.environ['CUDA_VISIBLE_DEVICES'] = str(GPU_INDEX)
 
-
+# Create log files
 MODEL = importlib.import_module(FLAGS.model) # import network module
 MODEL_FILE = os.path.join(BASE_DIR, 'models', FLAGS.model+'.py')
 LOG_DIR = FLAGS.log_dir
@@ -52,9 +52,9 @@ os.system('cp train.py %s' % (LOG_DIR)) # bkp of train procedure
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
 LOG_FOUT.write(str(FLAGS)+'\n')
 
+# Other constants
 MAX_NUM_POINT = 2048
 NUM_CLASSES = 40
-
 BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
 BN_DECAY_DECAY_STEP = float(DECAY_STEP)
@@ -64,9 +64,9 @@ BN_DECAY_CLIP = 0.99
 
 # ModelNet40 official train/test split
 TRAIN_FILES = provider.getDataFiles( \
-    os.path.join(BASE_DIR, 'data/kit/train_files.txt'))
-# TEST_FILES = provider.getDataFiles(\
-#     os.path.join(BASE_DIR, 'data/modelnet40_ply_hdf5_2048/test_files.txt'))
+    os.path.join(BASE_DIR, 'data/gen_data_kit_h5/train_files.txt'))
+VAL_FILES = provider.getDataFiles(\
+     os.path.join(BASE_DIR, 'data/gen_data_kit_h5/val_files.txt'))
 
 def log_string(out_str):
     LOG_FOUT.write(out_str+'\n')
@@ -84,6 +84,7 @@ def get_learning_rate(batch):
     learning_rate = tf.maximum(learning_rate, 0.00001) # CLIP THE LEARNING RATE!
     return learning_rate        
 
+
 def get_bn_decay(batch):
     bn_momentum = tf.train.exponential_decay(
                       BN_INIT_DECAY,
@@ -94,9 +95,11 @@ def get_bn_decay(batch):
     bn_decay = tf.minimum(BN_DECAY_CLIP, 1 - bn_momentum)
     return bn_decay
 
+
 def train():
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
+            # Get placeholders
             pointclouds_pl, labels_pl = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
             is_training_pl = tf.placeholder(tf.bool, shape=())
             
@@ -162,7 +165,7 @@ def train():
                 sys.stdout.flush()
                  
                 train_one_epoch(sess, ops, train_writer)
-                # eval_one_epoch(sess, ops, test_writer)
+                eval_one_epoch(sess, ops, test_writer)
                 
                 # Save the variables to disk.
                 if epoch % 10 == 0:
@@ -206,8 +209,8 @@ def train_one_epoch(sess, ops, train_writer):
             # Augment batched point clouds by rotation and jittering
             # rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
             # jittered_data = provider.jitter_point_cloud(rotated_data)
-            batch_data = current_data[start_idx:end_idx]
-            batch_labels = current_label[start_idx:end_idx]
+            batch_data = current_data[start_idx:end_idx, :, :]
+            batch_labels = current_label[start_idx:end_idx, :, :]
             feed_dict = {ops['pointclouds_pl']: batch_data,
                          ops['labels_pl']: batch_labels,
                          ops['is_training_pl']: is_training,}
@@ -230,7 +233,7 @@ def train_one_epoch(sess, ops, train_writer):
             log_string("Batch loss: {}".format(loss_val))
         
         log_string('mean loss: %f' % (loss_sum / float(num_batches)))
-        log_string('accuracy: %f' % (total_correct / float(total_seen)))
+#        log_string('accuracy: %f' % (total_correct / float(total_seen)))
 
         
 def eval_one_epoch(sess, ops, test_writer):
@@ -242,9 +245,9 @@ def eval_one_epoch(sess, ops, test_writer):
     total_seen_class = [0 for _ in range(NUM_CLASSES)]
     total_correct_class = [0 for _ in range(NUM_CLASSES)]
     
-    for fn in range(len(TEST_FILES)):
+    for fn in range(len(VAL_FILES)):
         log_string('----' + str(fn) + '-----')
-        current_data, current_label = provider.loadDataFile(TEST_FILES[fn])
+        current_data, current_label = provider.loadDataFile(VAL_FILES[fn])
         current_data = current_data[:,0:NUM_POINT,:]
         current_label = np.squeeze(current_label)
         
@@ -256,23 +259,25 @@ def eval_one_epoch(sess, ops, test_writer):
             end_idx = (batch_idx+1) * BATCH_SIZE
 
             feed_dict = {ops['pointclouds_pl']: current_data[start_idx:end_idx, :, :],
-                         ops['labels_pl']: current_label[start_idx:end_idx],
+                         ops['labels_pl']: current_label[start_idx:end_idx, :, :],
                          ops['is_training_pl']: is_training}
             summary, step, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
                 ops['loss'], ops['pred']], feed_dict=feed_dict)
             pred_val = np.argmax(pred_val, 1)
-            correct = np.sum(pred_val == current_label[start_idx:end_idx])
-            total_correct += correct
+#            correct = np.sum(pred_val == current_label[start_idx:end_idx])
+            # total_correct += correct
             total_seen += BATCH_SIZE
             loss_sum += (loss_val*BATCH_SIZE)
+            '''
             for i in range(start_idx, end_idx):
                 l = current_label[i]
                 total_seen_class[l] += 1
                 total_correct_class[l] += (pred_val[i-start_idx] == l)
+            '''
             
     log_string('eval mean loss: %f' % (loss_sum / float(total_seen)))
-    log_string('eval accuracy: %f'% (total_correct / float(total_seen)))
-    log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
+#    log_string('eval accuracy: %f'% (total_correct / float(total_seen)))
+#    log_string('eval avg class acc: %f' % (np.mean(np.array(total_correct_class)/np.array(total_seen_class,dtype=np.float))))
          
 
 
