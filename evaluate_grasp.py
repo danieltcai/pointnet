@@ -168,10 +168,14 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
             for i in range(start_idx, end_idx):
                 log_string('Example num: {}'.format(i))
 
-                point_cloud = current_data[i]
-                point_labels = current_label[i]
+                point_cloud = current_data[i] # Single point cloud
+                point_labels = current_label[i] # Label for the point cloud, N x 7
+
+                # To eval regression on sin cos
+                num_points, label_dim = point_labels.shape
+                pred_dim = 10
                 preds = pred_val[i - start_idx]
-                preds = np.reshape(preds, point_labels.shape)
+                preds = np.reshape(preds, [num_points, pred_dim]) # N x 10 if regressing sin and cos of ori
 
                 # print("point_cloud.shape: {}".format(point_cloud.shape))
                 # print("point_labels.shape: {}".format(point_labels.shape))
@@ -180,20 +184,42 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
 
                 # Visualize point cloud, label, pred
                 for pt_idx, point_label in enumerate(point_labels):
+                    if point_label[0] == 0: # Skip points without a robust grasp
+                        continue
+                    # For regression sin cos of orientation
                     # Calculate distances
                     pred = preds[pt_idx]
                     log_string("Point: {}".format(pt_idx))
-                    gq_distance = np.linalg.norm(pred[0] - point_label[0])
                     pos_distance = np.linalg.norm(pred[1:4] - point_label[1:4])
-                    ori_distance = np.linalg.norm(pred[4:] - point_label[4:])
-                    log_string("GQ distance: {}".format(gq_distance))
-                    log_string("Pos distance: {}".format(pos_distance))
-                    log_string("Ori distance: {}".format(ori_distance))
 
-                    log_string("Label for point: {}".format(pt_idx))
-                    log_string(point_label)
-                    log_string("Pred for point: {}".format(pt_idx))
-                    log_string(pred)
+                    point_label_sin = np.sin(point_label[4:])
+                    point_label_cos = np.cos(point_label[4:])
+                    ori_sin_distance = np.linalg.norm(pred[4:7] - point_label_sin)
+                    ori_cos_distance = np.linalg.norm(pred[7:pred_dim] - point_label_cos)
+                    log_string("Pos distance: {}".format(pos_distance))
+                    log_string("Ori_sin distance: {}".format(ori_sin_distance))
+                    log_string("Ori_cos distance: {}".format(ori_cos_distance))
+
+                    print("Label for point: {}".format(pt_idx))
+                    print(point_label)
+                    print("Pred for point: {}".format(pt_idx))
+                    print(pred)
+
+                    # Full on distances for regression
+                    # # Calculate distances
+                    # pred = preds[pt_idx]
+                    # log_string("Point: {}".format(pt_idx))
+                    # gq_distance = np.linalg.norm(pred[0] - point_label[0])
+                    # pos_distance = np.linalg.norm(pred[1:4] - point_label[1:4])
+                    # ori_distance = np.linalg.norm(pred[4:] - point_label[4:])
+                    # log_string("GQ distance: {}".format(gq_distance))
+                    # log_string("Pos distance: {}".format(pos_distance))
+                    # log_string("Ori distance: {}".format(ori_distance))
+
+                    # log_string("Label for point: {}".format(pt_idx))
+                    # log_string(point_label)
+                    # log_string("Pred for point: {}".format(pt_idx))
+                    # log_string(pred)
 
 
                 #     # GROUND TRUTH

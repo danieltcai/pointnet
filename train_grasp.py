@@ -246,7 +246,7 @@ def eval_one_epoch(sess, ops, test_writer):
     total_correct_class = [0 for _ in range(NUM_CLASSES)]
     
     for fn in range(len(VAL_FILES)):
-        log_string('----' + str(fn) + '-----')
+        log_string('----' + 'Eval File No. ' + str(fn) + '-----')
         current_data, current_label = provider.loadDataFile(VAL_FILES[fn])
         current_data = current_data[:,0:NUM_POINT,:]
         current_label = np.squeeze(current_label)
@@ -255,6 +255,7 @@ def eval_one_epoch(sess, ops, test_writer):
         num_batches = file_size // BATCH_SIZE
         
         for batch_idx in range(num_batches):
+            print('Eval Batch_num {}/{}'.format(batch_idx, num_batches))
             start_idx = batch_idx * BATCH_SIZE
             end_idx = (batch_idx+1) * BATCH_SIZE
 
@@ -268,6 +269,8 @@ def eval_one_epoch(sess, ops, test_writer):
             # total_correct += correct
             total_seen += BATCH_SIZE
             loss_sum += (loss_val*BATCH_SIZE)
+            print("Eval Batch loss: {}".format(loss_val))
+
             '''
             for i in range(start_idx, end_idx):
                 l = current_label[i]

@@ -225,13 +225,6 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     loss_pos_val = tf.reduce_mean(per_point_loss_pos_masked) # (1)
     loss_ori_val = tf.reduce_mean(per_point_loss_ori_masked) # (1)
 
-    # Orig block
-    # loss_pos = tf.reduce_sum(per_point_loss_pos_masked, axis=-1) # (B)
-    # loss_ori = tf.reduce_sum(per_point_loss_ori_masked, axis=-1) # (B)
-    # loss_pos_val = tf.reduce_mean(loss_pos) # (1)
-    # loss_ori_val = tf.reduce_mean(loss_ori) # (1)
-
-
     # Don't penalize prediction robustness for now
     # # Loss for predicting non-zero robustness
     # square_error_robust = tf.square(q - q_hat) # (B x N)
@@ -247,8 +240,8 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     # loss_notrobust_val = tf.reduce_mean(loss_notrobust)
 
 
-    pos_weight = 1.0
-    ori_weight = 0.01
+    pos_weight = 0.0
+    ori_weight = 0.1
     robust_weight = 1.0
     not_robust_weight = 1.0
     # pos_weight = 5.0
@@ -266,11 +259,6 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     # tf.summary.scalar('not-robustness loss', loss_notrobust_val)
     tf.summary.scalar('regression loss', regression_loss)
 
-
-    # This remains the same
-    # loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=label)
-    # classify_loss = tf.reduce_mean(loss)
-    # tf.summary.scalar('classify loss', classify_loss)
 
     # Enforce the transformation as orthogonal matrix
     transform = end_points['transform'] # BxKxK
