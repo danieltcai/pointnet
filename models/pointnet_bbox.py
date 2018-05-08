@@ -21,7 +21,9 @@ def get_model(point_cloud, is_training, bn_decay=None):
     num_point = point_cloud.get_shape()[1].value
     end_points = {}
 
-    num_output = num_point * 7
+    label_dim = 1 + 3 + 6 # GQ, Pos, Ori_sin, Ori_cos
+    num_output = num_point * label_dim
+    # num_output = num_point * 7
 
     with tf.variable_scope('transform_net1') as sc:
         transform = input_transform_net(point_cloud, is_training, bn_decay, K=3)
@@ -86,16 +88,16 @@ def get_model(point_cloud, is_training, bn_decay=None):
                                   scope='fc2', bn_decay=bn_decay)
     # net_concat = tf_util.dropout(net_concat, keep_prob=0.7, is_training=is_training,
     #                       scope='dp2')
-    net_concat = tf_util.fully_connected(net_concat, num_output, activation_fn=None, scope='fc3')
+    net_concat = tf_util.fully_connected(net_concat, num_output, activation_fn=None, scope='fc3') # Question: Should I use two parallel outputs for one to have tanh?
 
     # print(net_concat.get_shape())
-    assert net_concat.get_shape() == [batch_size, num_point * 7]
+    assert net_concat.get_shape() == [batch_size, num_point * label_dim]
 
     return net_concat, end_points
 
 
 def get_loss(pred, label, end_points, reg_weight=0.001):
-    """ pred: Bx(Nx7),
+    """ pred: Bx(Nx10),
         label: Bx(Nx7), """
 
 
@@ -171,72 +173,97 @@ def get_loss(pred, label, end_points, reg_weight=0.001):
     '''
     # TODo: Add other loss terms 
 
+    # For sin cos prediction, this is 10
+    label_dim_pred = 10
+    label_dim_label = 7 # Since our labels are just a, b, g without sin cos
 
-
-
-
+    # print("SHAPE PRED")
+    # print(pred.get_shape())
     # Try different position and orientation losses
     batch_size = pred.get_shape()[0].value
-    num_point = pred.get_shape()[1].value / 7
+    num_point = pred.get_shape()[1].value / label_dim_pred
 
-    y_hat = tf.reshape(pred, [batch_size, num_point, 7]) # (B x N x 7)
-    y = tf.reshape(label, [batch_size, num_point, 7])
+    y_hat = tf.reshape(pred, [batch_size, num_point, label_dim_pred]) # (B x N x 10)
+    y = tf.reshape(label, [batch_size, num_point, label_dim_label]) # (B x N x 7)
 
+    # GQ
     q_hat = y_hat[:, :, 0] # (B x N)
     q = y[:, :, 0]
 
+    # Pos
     g_hat_pos = y_hat[:, :, 1:4] # (B x N x 3)
     g_pos = y[:, :, 1:4]
 
-    g_hat_ori = y_hat[:, :, 4:] # (B x N x 3)
-    g_ori = y[:, :, 4:]
+    # Ori
+    g_hat_ori_sin = y_hat[:, :, 4:7] # (B x N x 3) Perhaps shouldnt use tanh since would require very high output for 1, -1
+    g_hat_ori_cos = y_hat[:, :, 7:label_dim_pred] # (B x N x 3)
+    # g_hat_ori_sin = tf.tanh(y_hat[:, :, 4:7]) # (B x N x 3) Use tanh to squish to -1, 1 to match label
+    # g_hat_ori_cos = tf.tanh(y_hat[:, :, 7:label_dim_pred]) # (B x N x 3)
+    g_ori = y[:, :, 4:label_dim_label]
+    g_ori_sin = tf.sin(g_ori) # Regress the sin and cos of the orientations
+    g_ori_cos = tf.cos(g_ori)
 
+    # Mask
     robust_mask = tf.cast(tf.cast(q, tf.bool), tf.float32) # (B x N)
 
     #  L2 position and orientation losses
     square_error_pos = tf.square(g_pos - g_hat_pos) # (B x N x 3)
     per_point_loss_pos = tf.reduce_sum(square_error_pos, axis=-1) #(B x N)
+ 
+    assert g_ori_sin.get_shape() == g_hat_ori_sin.get_shape() == g_ori_cos.get_shape() == g_hat_ori_cos.get_shape() 
+    square_error_ori_sin = tf.square(g_ori_sin - g_hat_ori_sin)
+    square_error_ori_cos = tf.square(g_ori_cos - g_hat_ori_cos)
 
-    square_error_ori = tf.square(g_ori - g_hat_ori) # (B x N x 3)
+    square_error_ori = (square_error_ori_sin + square_error_ori_cos) / 2.0 # (B x N x 3)  # Take average of sin and cos losses
     per_point_loss_ori = tf.reduce_sum(square_error_ori, axis=-1) #(B x N)
     
     # Don't penalize the regression if there is no grasp present
     per_point_loss_pos_masked = tf.multiply(robust_mask, per_point_loss_pos) # (B x N)
     per_point_loss_ori_masked = tf.multiply(robust_mask, per_point_loss_ori) # (B x N)
 
-    loss_pos = tf.reduce_sum(per_point_loss_pos_masked, axis=-1) # (B)
-    loss_ori = tf.reduce_sum(per_point_loss_ori_masked, axis=-1) # (B)
+    # Take the mean loss over all the points over all the batches 
+    loss_pos_val = tf.reduce_mean(per_point_loss_pos_masked) # (1)
+    loss_ori_val = tf.reduce_mean(per_point_loss_ori_masked) # (1)
 
-    loss_pos_val = tf.reduce_mean(loss_pos) # (1)
-    loss_ori_val = tf.reduce_mean(loss_ori) # (1)
-
-    # Loss for predicting non-zero robustness
-    square_error_robust = tf.square(q - q_hat) # (B x N)
-    square_error_robust_masked = tf.multiply(robust_mask, square_error_robust) # (B x N)
-    loss_robust = tf.reduce_sum(square_error_robust_masked, axis=-1) # (B)
-    loss_robust_val = tf.reduce_mean(loss_robust)
-
-    # Loss for predicting zero robustness
-    square_error_notrobust = tf.square(q - q_hat) # (B x N)
-    not_robust_mask = 1.0 - robust_mask
-    square_error_notrobust_masked = tf.multiply(not_robust_mask, square_error_notrobust) # (B x N)
-    loss_notrobust = tf.reduce_sum(square_error_notrobust_masked, axis=-1) # (B)
-    loss_notrobust_val = tf.reduce_mean(loss_notrobust)
+    # Orig block
+    # loss_pos = tf.reduce_sum(per_point_loss_pos_masked, axis=-1) # (B)
+    # loss_ori = tf.reduce_sum(per_point_loss_ori_masked, axis=-1) # (B)
+    # loss_pos_val = tf.reduce_mean(loss_pos) # (1)
+    # loss_ori_val = tf.reduce_mean(loss_ori) # (1)
 
 
-    pos_weight = 5.0
+    # Don't penalize prediction robustness for now
+    # # Loss for predicting non-zero robustness
+    # square_error_robust = tf.square(q - q_hat) # (B x N)
+    # square_error_robust_masked = tf.multiply(robust_mask, square_error_robust) # (B x N)
+    # loss_robust = tf.reduce_sum(square_error_robust_masked, axis=-1) # (B)
+    # loss_robust_val = tf.reduce_mean(loss_robust)
+
+    # # Loss for predicting zero robustness
+    # square_error_notrobust = tf.square(q - q_hat) # (B x N)
+    # not_robust_mask = 1.0 - robust_mask
+    # square_error_notrobust_masked = tf.multiply(not_robust_mask, square_error_notrobust) # (B x N)
+    # loss_notrobust = tf.reduce_sum(square_error_notrobust_masked, axis=-1) # (B)
+    # loss_notrobust_val = tf.reduce_mean(loss_notrobust)
+
+
+    pos_weight = 1.0
     ori_weight = 0.01
     robust_weight = 1.0
-    not_robust_weight = 0.5
+    not_robust_weight = 1.0
+    # pos_weight = 5.0
+    # ori_weight = 0.01
+    # robust_weight = 1.0
+    # not_robust_weight = 0.5
     regression_loss = pos_weight * loss_pos_val + \
-                      ori_weight * loss_ori_val + \
-                      robust_weight * loss_robust_val + \
-                      not_robust_weight * loss_notrobust_val
+                      ori_weight * loss_ori_val
+                      # robust_weight * loss_robust_val + \
+                      # not_robust_weight * loss_notrobust_val
 
     tf.summary.scalar('position loss', loss_pos_val)
     tf.summary.scalar('orientation loss', loss_ori_val)
-    tf.summary.scalar('robustness loss', loss_robust_val)
-    tf.summary.scalar('not-robustness loss', loss_notrobust_val)
+    # tf.summary.scalar('robustness loss', loss_robust_val)
+    # tf.summary.scalar('not-robustness loss', loss_notrobust_val)
     tf.summary.scalar('regression loss', regression_loss)
 
 

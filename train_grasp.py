@@ -20,7 +20,7 @@ parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU
 parser.add_argument('--model', default='pointnet_bbox', help='Model name: pointnet_cls or pointnet_cls_basic [default: pointnet_cls]')
 parser.add_argument('--log_dir', default='log', help='Log dir [default: log]')
 parser.add_argument('--num_point', type=int, default=1024, help='Point Number [256/512/1024/2048] [default: 1024]')
-parser.add_argument('--max_epoch', type=int, default=50, help='Epoch to run [default: 50]') # orig 250
+parser.add_argument('--max_epoch', type=int, default=5, help='Epoch to run [default: 50]') # orig 250
 parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
@@ -200,7 +200,7 @@ def train_one_epoch(sess, ops, train_writer):
         loss_sum = 0
        
         for batch_idx in range(num_batches):
-            log_string('Batch_num {}/{}'.format(batch_idx, num_batches))
+            print('Batch_num {}/{}'.format(batch_idx, num_batches))
             start_idx = batch_idx * BATCH_SIZE
             end_idx = (batch_idx+1) * BATCH_SIZE
             
@@ -230,7 +230,7 @@ def train_one_epoch(sess, ops, train_writer):
             total_seen += BATCH_SIZE
             loss_sum += loss_val
 
-            log_string("Batch loss: {}".format(loss_val))
+            print("Batch loss: {}".format(loss_val))
         
         log_string('mean loss: %f' % (loss_sum / float(num_batches)))
 #        log_string('accuracy: %f' % (total_correct / float(total_seen)))
